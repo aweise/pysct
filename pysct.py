@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 
 import sys
+import fileinput
 import json
 import base64
 import struct
 import datetime
 import hashlib
 import ecdsa
-import re
 from ecdsa import util
 from argparse import ArgumentParser
 
@@ -48,7 +48,10 @@ def strip_newlines(blob):
     return type(blob)(b for b in blob if int(b) != ord('\n'))
 
 def loadSCT(path):
-    sct = bytearray(open(path, 'rb').read())
+    if path == '-':
+        sct = sys.stdin.read()
+    else:
+        sct = bytearray(open(path, 'rb').read())
     # The file could be Base64-encoded, e.g. when downloaded from a webserver.
     # As binary SCTs start with 0x0 (which is not a valid Base64 character),
     # it is safe -- and convenient -- to try to decode it.
