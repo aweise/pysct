@@ -85,8 +85,6 @@ def parseSCT(sct, offset=0):
         signature_algo = signature_algos[sigid]
     except:
         raise ValueError('Unknown signature algorithm - id: {}'.format(signature_id))
-    if signature_algo != 'ECDSA':
-        raise ValueError('Unsupported signature algorithm: {}'.format(signature_algo))
 
     return dict(
         version=ver,
@@ -144,6 +142,9 @@ def loadCert(path):
     return cert
 
 def verifySCT(sct, cert):
+    sig_algo = sct['sig_algo']
+    if sig_algo != 'ECDSA':
+        raise ValueError('Unsupported signature algorithm: {}'.format(sig_algo))
     # Signature uses 3 bytes for length -> pack into 4 bytes and ignore 1st
     _der_len_0, der_len_1, der_len_2, der_len_3 = struct.unpack(
         ">4B", struct.pack( ">I", len(cert)))
@@ -170,6 +171,7 @@ def verifySCT(sct, cert):
     except:
         valid = False
     return dict(valid=valid, key=vk.to_string())
+
 if __name__=='__main__':
     cli = ArgumentParser(description='Work with signed certificate timestamp files')
     cli.add_argument('sct', help='SCT file to process')
@@ -201,7 +203,7 @@ if __name__=='__main__':
         parsed = parseSCT(sct, offset)
         offset = parsed['next_offset']
         if args.verify:
-            verify = verifySCT(sct, cert)
+            verify = verifySCT(parsed, cert)
             printSCT(parsed, sct_number, verify)
             ok &= verify['valid']
         else:
