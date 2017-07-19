@@ -134,8 +134,12 @@ def loadCert(path):
         fmt = 'DER'
     # We need DER to craft the signed message for verification
     if fmt == 'PEM':
+        plain_cert = cert.decode('ascii')
+        # PEM could include the full chain, so we only take the first cert
+        end_marker = '-----END CERTIFICATE-----'
+        plain_cert = plain_cert[:plain_cert.index(end_marker)+len(end_marker)]
         import ssl
-        cert = ssl.PEM_cert_to_DER_cert(cert.decode('ascii'))
+        cert = ssl.PEM_cert_to_DER_cert(plain_cert)
     return cert
 
 def verifySCT(sct, cert):
@@ -159,10 +163,12 @@ def verifySCT(sct, cert):
     vk = ecdsa.VerifyingKey.from_string(parsed['log']['key'][27:], ecdsa.NIST256p)
     h = parsed['hash_fn']
     h.update(signed_data)
-    return dict(
-        valid=vk.verify_digest(parsed['signature'], h.digest(), util.sigdecode_der),
-        key=vk.to_string())
-
+    try:
+        vk.verify_digest(parsed['signature'], h.digest(), util.sigdecode_der)
+        valid = True
+    except:
+        valid = False
+    return dict(valid=valid, key=vk.to_string())
 if __name__=='__main__':
     cli = ArgumentParser(description='Work with signed certificate timestamp files')
     cli.add_argument('sct', help='SCT file to process')
