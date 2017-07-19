@@ -6,10 +6,21 @@ import json
 import base64
 import struct
 import datetime
+from argparse import ArgumentParser
+
 import hashlib
 import ecdsa
 from ecdsa import util
-from argparse import ArgumentParser
+
+try:
+    # We need Crypto for RSA support
+    import Crypto
+    from Crypto.PublicKey import RSA
+    from Crypto.Signature import PKCS1_v1_5
+    from Crypto.Hash import SHA256
+    HAVE_CRYPTO = True
+except:
+    HAVE_CRYPTO = False
 
 # List of known logs, taken from https://ct.grahamedgecombe.com/logs.json
 logs = json.loads(open('logs.json').read())['logs']
@@ -78,21 +89,18 @@ def parseSCT(sct, offset=0):
         raise ValueError('SCT contains extensions. What do?') 
     try:
         hash_algo_name = hash_algos[hashid]
-        hash_algo = hashlib.new(hash_algo_name)
     except:
         raise ValueError('Unknown hashing algorithm - id: {}'.format(hashid))
     try:
         signature_algo = signature_algos[sigid]
     except:
         raise ValueError('Unknown signature algorithm - id: {}'.format(signature_id))
-
     return dict(
         version=ver,
         log=log,
         timestamp=timestamp,
         extensions=extensions,
         hash_algo=hash_algo_name.upper(),
-        hash_fn=hash_algo,
         sig_algo=signature_algo,
         signature=sig,
         next_offset=offset
@@ -141,9 +149,32 @@ def loadCert(path):
         cert = ssl.PEM_cert_to_DER_cert(plain_cert)
     return cert
 
+def verify_ecdsa(message, signature, key, hash_algo):
+    vk = ecdsa.VerifyingKey.from_string(
+            key[27:], ecdsa.NIST256p)
+    hashfn = hashlib.new(hash_algo)
+    hashfn.update(message)
+    digest = hashfn.digest()
+    try:
+        vk.verify_digest(signature, digest, util.sigdecode_der)
+        return True
+    except:
+        return False
+
+def verify_rsa(message, signature, key, hash_algo):
+    rsakey = RSA.importKey(key)
+    verifier = PKCS1_v1_5.new(rsakey)
+    digest = SHA256.new()
+    digest.update(message)
+    return verifier.verify(digest, signature)
+
+supported_algos = dict(ECDSA=verify_ecdsa)
+if HAVE_CRYPTO:
+    supported_algos['RSA'] = verify_rsa
+
 def verifySCT(sct, cert):
     sig_algo = sct['sig_algo']
-    if sig_algo != 'ECDSA':
+    if sig_algo not in supported_algos:
         raise ValueError('Unsupported signature algorithm: {}'.format(sig_algo))
     # Signature uses 3 bytes for length -> pack into 4 bytes and ignore 1st
     _der_len_0, der_len_1, der_len_2, der_len_3 = struct.unpack(
@@ -162,15 +193,10 @@ def verifySCT(sct, cert):
         cert,
         parsed['extensions'])
 
-    vk = ecdsa.VerifyingKey.from_string(parsed['log']['key'][27:], ecdsa.NIST256p)
-    h = parsed['hash_fn']
-    h.update(signed_data)
-    try:
-        vk.verify_digest(parsed['signature'], h.digest(), util.sigdecode_der)
-        valid = True
-    except:
-        valid = False
-    return dict(valid=valid, key=vk.to_string())
+    key = parsed['log']['key']
+    valid = supported_algos[sig_algo](
+        signed_data, parsed['signature'], key, parsed['hash_algo'])
+    return dict(valid=valid, key=key)
 
 if __name__=='__main__':
     cli = ArgumentParser(description='Work with signed certificate timestamp files')
