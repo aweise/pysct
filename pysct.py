@@ -100,9 +100,9 @@ def parseSCT(sct, offset=0):
         next_offset=offset
     )
 
-def printSCT(sct, verify=None):
+def printSCT(sct, sct_number=0, verify=None):
     logname = sct['log']['description']
-    print('''SCT:
+    print('''SCT (#{number}):
     Version:             {version}
     Log:                 {logname}
     Timestamp:           {ts}
@@ -111,6 +111,7 @@ def printSCT(sct, verify=None):
     Signature algorithm: {sig_algo}
     Signature length:    {siglen}
     Signature:           {pretty_sig}'''.format(
+        number=sct_number,
         pretty_sig=pretty_hex(sct['signature'], indent=25),
         siglen=len(sct['signature']),
         logname=logname,
@@ -192,6 +193,7 @@ if __name__=='__main__':
     sct = loadSCT(args.sct)
     if args.verify:
         cert = loadCert(args.verify[0])
+    sct_number = 0
     offset = tls_padding
     ok = len(sct) > 0
     while offset < len(sct):
@@ -200,9 +202,10 @@ if __name__=='__main__':
         offset = parsed['next_offset']
         if args.verify:
             verify = verifySCT(sct, cert)
-            printSCT(parsed, verify)
+            printSCT(parsed, sct_number, verify)
             ok &= verify['valid']
         else:
-            printSCT(parsed)
+            printSCT(parsed, sct_number)
+        sct_number += 1 
     sys.exit(0 if ok else 1)
 
