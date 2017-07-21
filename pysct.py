@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import sys
+import os.path
 import fileinput
 import json
 import base64
@@ -22,16 +23,19 @@ try:
 except:
     HAVE_CRYPTO = False
 
-# List of known logs, taken from https://ct.grahamedgecombe.com/logs.json
-logs = json.loads(open('logs.json').read())['logs']
-
-# convert to binary
-for l in logs:
-    l['log_id'] = base64.b64decode(l['log_id'])
-    l['key'] = base64.b64decode(l['key'])
-
-# clean format, we want something like { 'log_x_id': { details_for_log_x } }
-logs = { l['log_id']: { k: v for k, v in l.items() if k != 'log_id' } for l in logs }
+def load_logs(path=None):
+    # List of known logs, taken from https://ct.grahamedgecombe.com/logs.json
+    logs_path = path or os.path.join(os.path.dirname(__file__), 'logs.json')
+    logs = json.loads(open(logs_path).read())['logs']
+    
+    # convert to binary
+    for l in logs:
+        l['log_id'] = base64.b64decode(l['log_id'])
+        l['key'] = base64.b64decode(l['key'])
+    
+    # clean format, we want something like { 'log_x_id': { details_for_log_x } }
+    logs = { l['log_id']: { k: v for k, v in l.items() if k != 'log_id' } for l in logs }
+    return logs
 
 # Q Why use strings instead of objects here?
 # A If hashlib uses its openssl backend, hash.name is not available,
@@ -48,6 +52,8 @@ hash_algos = [
 signature_algos = [None, 'RSA', 'DSA', 'ECDSA']
 
 def pretty_hex(blob, indent=0, line_width=80):
+    if isinstance(blob, str):
+        blob = [ord(x) for x in blob]
     bytes_per_line = int((line_width - indent) / 3) # 2 hex digits + 1 space
     lines = int(len(blob) / bytes_per_line + 0.5)
     result = []
@@ -72,7 +78,7 @@ def loadSCT(path):
         pass
     return sct
 
-def parseSCT(sct, offset=0):
+def parseSCT(sct, logs, offset=0):
     header_fmt = '>B32sQHBBH'
     header_len = struct.calcsize(header_fmt)
     ver, logid, timestamp, extensions, hashid, sigid, siglen = struct.unpack_from(header_fmt, sct, offset)
@@ -207,6 +213,7 @@ if __name__=='__main__':
     cli.add_argument(
         '-t', '--tls', action='store_true',
         help='Process SCT in TLS extension format')
+    cli.add_argument('-l', '--logs', help='Path to list of CT logs in JSON format.')
     args = cli.parse_args()
     if args.tls:
         '''SCT in TLS format starts with two bytes "00 12" + two bytes length
@@ -218,6 +225,7 @@ if __name__=='__main__':
         sctl_padding = 2
     else:
         tls_padding = sctl_padding = 0
+    logs = load_logs(args.logs)
     sct = loadSCT(args.sct)
     if args.verify:
         cert = loadCert(args.verify[0])
@@ -226,7 +234,7 @@ if __name__=='__main__':
     ok = len(sct) > 0
     while offset < len(sct):
         offset += sctl_padding
-        parsed = parseSCT(sct, offset)
+        parsed = parseSCT(sct, logs, offset)
         offset = parsed['next_offset']
         if args.verify:
             verify = verifySCT(parsed, cert)
